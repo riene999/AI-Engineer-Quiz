@@ -10,7 +10,9 @@ async function api(path, opts = {}) {
   const headers = opts.headers || {};
   if (state.token) headers["Authorization"] = "Bearer " + state.token;
   if (opts.json) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
-  const res = await fetch(path, { ...opts, headers });
+  // fetch defaults to GET, which may not carry a body: callers passing json/body without a method mean POST.
+  const method = opts.method || (opts.body !== undefined ? "POST" : "GET");
+  const res = await fetch(path, { ...opts, method, headers });
   if (res.status === 401) { logout(); throw new Error("unauthorised"); }
   if (!res.ok) { const t = await res.text(); throw new Error(t || res.statusText); }
   return res.headers.get("content-type")?.includes("json") ? res.json() : res;
