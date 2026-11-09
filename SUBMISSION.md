@@ -1,8 +1,7 @@
 # 交付说明：素材检索与结果导出
 
-- Fork：`<填写 fork 链接>`
+- Fork：`<https://github.com/riene999/AI-Engineer-Quiz/tree/feature/search-filter-export>`
 - 分支：`feature/search-filter-export`
-- 最终 commit：`<填写 SHA>`
 
 ## 运行与验证
 
