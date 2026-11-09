@@ -30,11 +30,7 @@
         <strong>Keepstack</strong>
       </div>
       <div class="search-box">
-        <input id="search" placeholder="Search assets, tags, metadata...">
-        <select id="search-mode" title="Search mode">
-          <option value="keyword">Keyword</option>
-          <option value="semantic">Semantic</option>
-        </select>
+        <input id="search" type="search" placeholder="Search assets, tags, metadata..." maxlength="500">
       </div>
       <div class="topbar-right">
         <button id="btn-upload" class="btn btn-primary">Upload</button>
@@ -56,12 +52,13 @@
         </nav>
 
         <div id="facets" class="facets">
+          <p class="facet-note muted">Counts are for all active assets, not the current matches.</p>
           <div class="facet-group">
             <h4>Media type</h4>
             <ul id="facet-media"></ul>
           </div>
           <div class="facet-group">
-            <h4>Top tags</h4>
+            <h4>Top tags <span class="muted">(click to require)</span></h4>
             <ul id="facet-tags"></ul>
           </div>
         </div>
@@ -72,17 +69,54 @@
           <div class="view-head">
             <h2 id="result-title">Library</h2>
             <div class="view-controls">
-              <span id="active-filter" class="chip hidden"></span>
+              <button id="btn-export" class="btn" title="Download every matching asset as CSV">Export CSV</button>
+            </div>
+          </div>
+
+          <div class="filter-bar">
+            <label>Collection
+              <select id="f-collection"><option value="">Any collection</option></select>
+            </label>
+            <label>Media type
+              <select id="f-media"><option value="">Any type</option></select>
+            </label>
+            <label>Must have tags
+              <input id="f-include" list="tag-options" placeholder="Tag, then Enter" autocomplete="off">
+            </label>
+            <label>Exclude tags
+              <input id="f-exclude" list="tag-options" placeholder="Tag, then Enter" autocomplete="off">
+            </label>
+            <label>Sort
               <select id="sort">
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
+                <option value="newest">Created: newest first</option>
+                <option value="oldest">Created: oldest first</option>
                 <option value="name">Name</option>
                 <option value="largest">Largest</option>
               </select>
-            </div>
+            </label>
+            <datalist id="tag-options"></datalist>
           </div>
+
+          <div class="active-filters">
+            <span class="muted">Filters:</span>
+            <span id="active-chips"></span>
+            <button id="btn-clear-filters" class="btn btn-ghost btn-sm hidden">Clear all</button>
+          </div>
+
+          <div class="pager">
+            <span id="page-info" class="muted"></span>
+            <span class="pager-buttons">
+              <button id="page-prev" class="btn btn-sm" disabled>&larr; Prev</button>
+              <button id="page-next" class="btn btn-sm" disabled>Next &rarr;</button>
+            </span>
+          </div>
+
           <div id="grid" class="grid"></div>
-          <div id="empty" class="empty hidden">No assets yet. Click Upload to get started.</div>
+          <div id="empty" class="empty hidden"></div>
+          <div id="load-error" class="empty error-box hidden">
+            <p id="load-error-msg">Could not load assets.</p>
+            <button id="btn-retry" class="btn">Retry</button>
+          </div>
         </div>
 
         <div id="view-collections" class="view hidden">

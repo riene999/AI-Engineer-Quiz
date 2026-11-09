@@ -142,6 +142,26 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
 .empty { padding: var(--s5); text-align: center; color: var(--muted); }
 
+/* ---------- search filters / pager ---------- */
+.filter-bar { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: flex-end; margin-bottom: var(--s2); }
+.filter-bar label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.filter-bar select, .filter-bar input {
+  background: var(--base-1); border: 1px solid var(--base-3); color: var(--text);
+  padding: 7px 10px; border-radius: var(--radius-sm); min-width: 160px;
+}
+.active-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-bottom: var(--s2); font-size: 13px; }
+#active-chips { display: contents; }
+.chip.neg { background: rgba(199, 53, 83, 0.10); color: var(--danger); }
+.chip.static { cursor: default; }
+.chip.static::after { content: none; }
+.btn-sm { padding: 4px 12px; font-size: 13px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s2); font-size: 14px; }
+.pager-buttons { display: flex; gap: var(--s1); }
+.error-box p { color: var(--danger); }
+.grid.loading { opacity: .5; transition: opacity .15s; }
+.facet-note { font-size: 12px; margin: 0; }
+
 /* ---------- drawer (asset detail) ---------- */
 .drawer { position: fixed; inset: 0; z-index: 40; }
 .drawer-backdrop, .modal-backdrop { position: absolute; inset: 0; background: rgba(29,36,51,0.35); }
