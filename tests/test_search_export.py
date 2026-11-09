@@ -271,3 +271,23 @@ def test_edits_through_api_show_up_in_search_and_export(client, cat):
     # Deleting (status != active) removes it from both.
     assert client.delete(f"/api/assets/{u}").status_code == 200
     assert listed() == exported() == []
+
+
+# ---------------------------------------------------------------------------
+# Reproducible scenario data (python -m keepstack seed-scenario)
+# ---------------------------------------------------------------------------
+
+def test_seed_scenario_matches_documented_counts(client):
+    from keepstack import seed_scenario
+
+    seed_scenario.run_seed_scenario()
+    seed_scenario.run_seed_scenario()  # idempotent
+    cid = get_conn().execute("SELECT id FROM collections WHERE name = ?",
+                             (seed_scenario.COLLECTION,)).fetchone()["id"]
+    params = {"q": "harbor", "collection_id": cid, "tag": ["approved", "campaign"],
+              "exclude_tag": "internal", "sort": "oldest"}
+    listed, totals = _all_pages(client, params, 24)
+    assert totals == {26} and len(listed) == len(set(listed)) == 26
+    rows = _csv(client.get("/api/assets/export.csv", params=params))
+    assert [r["uuid"] for r in rows] == listed
+    assert any("\n" in r["description"] and "中文" in r["description"] for r in rows)

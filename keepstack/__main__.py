@@ -17,6 +17,10 @@ def main() -> None:
         from .seed import run_seed
         run_seed()
         return
+    if len(sys.argv) > 1 and sys.argv[1] == "seed-scenario":
+        from .seed_scenario import run_seed_scenario
+        run_seed_scenario()
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "reindex":
         from . import vision
         from .db import get_conn, init_db
