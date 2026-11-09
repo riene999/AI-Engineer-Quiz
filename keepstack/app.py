@@ -173,21 +173,52 @@ async def upload_assets(
     return {"created": results}
 
 
+SortParam = Query("newest", pattern="^(newest|oldest|name|largest)$")
+
+
+def search_filters(
+    q: str = Query("", max_length=500),
+    media_type: Optional[str] = None,
+    collection_id: Optional[int] = Query(None, ge=1),
+    tag: list[str] = Query([]),
+    exclude_tag: list[str] = Query([]),
+    sort: str = SortParam,
+) -> dict:
+    """Filters shared by the paged list and the CSV export.
+
+    ``tag`` / ``exclude_tag`` may be repeated (``?tag=a&tag=b``); an asset must
+    carry every ``tag`` and none of the ``exclude_tag`` values.
+    """
+    return {"q": q, "media_type": media_type or None, "collection_id": collection_id,
+            "tags": tag, "exclude_tags": exclude_tag, "sort": sort}
+
+
 @app.get("/api/assets")
 def list_assets(
-    q: str = "",
-    media_type: Optional[str] = None,
-    tag: Optional[str] = None,
-    collection_id: Optional[int] = None,
-    status: str = "active",
-    sort: str = "newest",
+    filters: dict = Depends(search_filters),
     mode: str = "keyword",
-    limit: int = Query(60, le=200),
-    offset: int = 0,
+    limit: int = Query(60, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user: dict = Depends(require_user),
 ):
-    return search.search(q=q, media_type=media_type, tag=tag, collection_id=collection_id,
-                         status=status, sort=sort, mode=mode, limit=limit, offset=offset)
+    return search.search(**filters, mode=mode, limit=limit, offset=offset)
+
+
+# Declared before /api/assets/{uuid} so "export.csv" is not taken as a uuid.
+@app.get("/api/assets/export.csv")
+def export_assets_csv(filters: dict = Depends(search_filters),
+                      user: dict = Depends(require_user)):
+    body = search.export_csv(**filters)
+    stamp = now_iso()[:19].replace(":", "").replace("-", "")
+    log("asset.export", user=user, target_type="search",
+        detail=json.dumps(filters, ensure_ascii=False))
+    # UTF-8 with BOM so Excel opens Chinese text correctly.
+    return Response(
+        content=body.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="assets-{stamp}.csv"',
+                 "Cache-Control": "no-store"},
+    )
 
 
 def _get_asset_or_404(uuid: str) -> dict:

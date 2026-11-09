@@ -11,17 +11,24 @@ drill-down sidebar.
 """
 from __future__ import annotations
 
-from typing import Optional
+import csv
+import io
+from typing import Iterable, Optional
 
 from . import ai
 from .db import get_conn
 
+# Every sort ends with a unique key (a.id) so the order is total: rows that
+# share a created_at (or title/size) still land on exactly one page.
 SORTS = {
-    "newest": "a.created_at DESC",
-    "oldest": "a.created_at ASC",
-    "name": "a.title ASC",
-    "largest": "a.size DESC",
+    "newest": "a.created_at DESC, a.id DESC",
+    "oldest": "a.created_at ASC, a.id ASC",
+    "name": "a.title ASC, a.id ASC",
+    "largest": "a.size DESC, a.id DESC",
 }
+
+EXPORT_FIELDS = ["uuid", "title", "description", "filename", "media_type", "tags", "created_at"]
+EXPORT_TAG_SEPARATOR = ";"
 
 
 def _fts_query(q: str) -> str:
@@ -30,11 +37,71 @@ def _fts_query(q: str) -> str:
     return " ".join(f'"{t}"*' for t in terms)
 
 
+def normalize_tags(tags: Optional[Iterable[str]]) -> list[str]:
+    """Match how tags are stored (stripped, lower-cased); drop blanks and repeats."""
+    out: list[str] = []
+    for t in tags or []:
+        name = (t or "").strip().lower()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _filter_sql(
+    *,
+    q: str = "",
+    media_type: Optional[str] = None,
+    collection_id: Optional[int] = None,
+    tags: Optional[Iterable[str]] = None,
+    exclude_tags: Optional[Iterable[str]] = None,
+    status: str = "active",
+) -> tuple[str, list]:
+    """WHERE clause shared by the list and the export so they always agree.
+
+    Every condition is a predicate on ``a`` (no JOINs), so parameters are
+    bound strictly in the order the clauses are appended and no row can be
+    duplicated by a one-to-many join.
+    """
+    where = ["a.status = ?"]
+    params: list = [status]
+
+    fts = _fts_query(q)
+    if fts:
+        where.append("a.id IN (SELECT rowid FROM asset_fts WHERE asset_fts MATCH ?)")
+        params.append(fts)
+    if media_type:
+        where.append("a.media_type = ?")
+        params.append(media_type)
+    if collection_id is not None:
+        where.append("EXISTS (SELECT 1 FROM collection_assets ca"
+                     " WHERE ca.asset_id = a.id AND ca.collection_id = ?)")
+        params.append(collection_id)
+
+    include = normalize_tags(tags)
+    if include:
+        # (asset_id, tag_id) is the primary key and tag names are unique, so
+        # counting matches equals counting distinct required tags present.
+        marks = ",".join("?" * len(include))
+        where.append("(SELECT COUNT(*) FROM asset_tags at JOIN tags t ON t.id = at.tag_id"
+                     f" WHERE at.asset_id = a.id AND t.name IN ({marks})) = ?")
+        params.extend([*include, len(include)])
+    exclude = normalize_tags(exclude_tags)
+    if exclude:
+        marks = ",".join("?" * len(exclude))
+        where.append("NOT EXISTS (SELECT 1 FROM asset_tags at JOIN tags t ON t.id = at.tag_id"
+                     f" WHERE at.asset_id = a.id AND t.name IN ({marks}))")
+        params.extend(exclude)
+
+    return " AND ".join(where), params
+
+
 def search(
     *,
     q: str = "",
     media_type: Optional[str] = None,
     tag: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
+    exclude_tags: Optional[Iterable[str]] = None,
     collection_id: Optional[int] = None,
     status: str = "active",
     sort: str = "newest",
@@ -48,34 +115,18 @@ def search(
     if mode == "semantic" and q.strip():
         return _semantic_search(q, media_type, status, limit, offset)
 
-    where = ["a.status = ?"]
-    params: list = [status]
-    join = ""
-
-    if q.strip():
-        join += " JOIN asset_fts f ON f.rowid = a.id"
-        where.append("asset_fts MATCH ?")
-        params.append(_fts_query(q))
-    if media_type:
-        where.append("a.media_type = ?")
-        params.append(media_type)
-    if tag:
-        join += (" JOIN asset_tags at ON at.asset_id = a.id"
-                 " JOIN tags t ON t.id = at.tag_id AND t.name = ?")
-        params.append(tag.lower())
-    if collection_id:
-        join += " JOIN collection_assets ca ON ca.asset_id = a.id AND ca.collection_id = ?"
-        params.append(collection_id)
-
-    where_sql = " AND ".join(where)
-    order = "bm25(asset_fts)" if q.strip() else SORTS.get(sort, SORTS["newest"])
+    include = [*(tags or []), *([tag] if tag else [])]
+    where_sql, params = _filter_sql(q=q, media_type=media_type, collection_id=collection_id,
+                                    tags=include, exclude_tags=exclude_tags, status=status)
+    # The chosen sort applies with or without a keyword (no implicit bm25).
+    order = SORTS.get(sort, SORTS["newest"])
 
     total = conn.execute(
-        f"SELECT COUNT(*) AS c FROM assets a{join} WHERE {where_sql}", params
+        f"SELECT COUNT(*) AS c FROM assets a WHERE {where_sql}", params
     ).fetchone()["c"]
 
     rows = conn.execute(
-        f"""SELECT a.* FROM assets a{join} WHERE {where_sql}
+        f"""SELECT a.* FROM assets a WHERE {where_sql}
             ORDER BY {order} LIMIT ? OFFSET ?""",
         [*params, limit, offset],
     ).fetchall()
@@ -85,7 +136,50 @@ def search(
         "items": [_card(dict(r)) for r in rows],
         "facets": _facets(status),
         "mode": mode,
+        "sort": sort if sort in SORTS else "newest",
+        "limit": limit,
+        "offset": offset,
     }
+
+
+def export_rows(
+    *,
+    q: str = "",
+    media_type: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
+    exclude_tags: Optional[Iterable[str]] = None,
+    collection_id: Optional[int] = None,
+    sort: str = "newest",
+) -> list[dict]:
+    """Every matching active asset, in list order, with its tag names."""
+    conn = get_conn()
+    where_sql, params = _filter_sql(q=q, media_type=media_type, collection_id=collection_id,
+                                    tags=tags, exclude_tags=exclude_tags)
+    order = SORTS.get(sort, SORTS["newest"])
+    rows = [dict(r) for r in conn.execute(
+        f"SELECT a.* FROM assets a WHERE {where_sql} ORDER BY {order}", params)]
+    tag_map: dict[int, list[str]] = {}
+    for r in conn.execute(
+        f"""SELECT at.asset_id, t.name FROM asset_tags at JOIN tags t ON t.id = at.tag_id
+            WHERE at.asset_id IN (SELECT a.id FROM assets a WHERE {where_sql})
+            ORDER BY t.name""", params):
+        tag_map.setdefault(r["asset_id"], []).append(r["name"])
+    for r in rows:
+        r["tags"] = tag_map.get(r["id"], [])
+    return rows
+
+
+def export_csv(**filters) -> str:
+    """CSV text (RFC 4180 quoting, CRLF rows); header is written even for zero rows."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(EXPORT_FIELDS)
+    for r in export_rows(**filters):
+        w.writerow([
+            r["uuid"], r["title"] or "", r["description"] or "", r["filename"] or "",
+            r["media_type"] or "", EXPORT_TAG_SEPARATOR.join(r["tags"]), r["created_at"],
+        ])
+    return buf.getvalue()
 
 
 def _semantic_search(q, media_type, status, limit, offset) -> dict:
